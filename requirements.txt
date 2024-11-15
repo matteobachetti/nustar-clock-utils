@@ -17,4 +17,5 @@ astroquery
 plotly
 dash
 stingray>=0.3
+pyyaml
 
