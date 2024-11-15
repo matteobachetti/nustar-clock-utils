@@ -1557,7 +1557,7 @@ def temperature_correction_table(met_start, met_stop,
 
     if hdf_dump_file is not None:
         log.info(f"Saving intermediate data to {hdf_dump_file}...")
-        table.write(hdf_dump_file)
+        table.write(hdf_dump_file, overwrite=True)
         log.info(f"Done.")
     return table
 
