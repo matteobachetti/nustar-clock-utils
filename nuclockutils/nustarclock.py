@@ -1508,6 +1508,8 @@ def temperature_correction_table(met_start, met_stop,
     log.info(f"Calculating temperature correction between "
              f"MET {met_start:.1f}--{met_stop:.1f}")
 
+    mean_history = np.mean(temptable["temperature_smooth"])
+
     for i, met_intv in tqdm.tqdm(enumerate(met_intervals),
                                  total=len(met_intervals)):
         if met_intv[1] < met_start:
@@ -1527,15 +1529,28 @@ def temperature_correction_table(met_start, met_stop,
             log.warning(
                 f"Too few temperature points in interval "
                 f"{start} to {stop} (MET)")
-            temp_corr = np.zeros_like(times_fine)
-        else:
-            delay_function = \
-                temperature_delay(temptable_filt, divisors[i], craig_fit=craig_fit,
-                                  time_resolution=time_resolution,version=version)
+            # Get an estimate of the mean temperature closest to those dates
+            if tempidx[0] == 0:
+                ref_t = np.mean(temptable['temperature_smooth'][:20])
+                print("Using average temperature at the start of series")
+            elif tempidx[1] == len(temptable):
+                ref_t = np.mean(temptable['temperature_smooth'][-20:])
+                print("Using average temperature at the end of series")
+            else:
+                print("Using average temperature")
+                ref_t = mean_history
 
-            temp_corr = \
-                delay_function(times_fine) + last_corr - delay_function(last_time)
-            temp_corr[temp_corr != temp_corr] = 0
+            raw_mets = np.arange(start - 20, stop + 20)
+
+            temptable_filt = Table(dict(met=raw_mets, temperature_smooth=ref_t + np.zeros_like(raw_mets)))
+
+        delay_function = \
+            temperature_delay(temptable_filt, divisors[i], craig_fit=craig_fit,
+                                time_resolution=time_resolution,version=version)
+
+        temp_corr = \
+            delay_function(times_fine) + last_corr - delay_function(last_time)
+        temp_corr[temp_corr != temp_corr] = 0
 
         new_data = Table(dict(met=times_fine,
                               temp_corr=temp_corr,
