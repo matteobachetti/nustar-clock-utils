@@ -15,6 +15,7 @@ from .utils import NUSTAR_MJDREF, splitext_improved, sec_to_mjd
 from .utils import filter_with_region, fix_byteorder, rolling_std
 from .utils import measure_overall_trend, cross_two_gtis, get_rough_trend_fun
 from .utils import spline_through_data, cubic_interpolation, robust_poly_fit
+from .utils import get_temperature_parameters
 from astropy.io import fits
 import tqdm
 from astropy import log
@@ -212,10 +213,10 @@ def eliminate_trends_in_residuals(temp_table, clock_offset_table,
         table_new = temp_table[temp_idx_start:temp_idx_end]
         cltable_new = clock_offset_table[cl_idx_start:cl_idx_end]
         met = cltable_new['met']
-        
+
         if len(met) < 2:
             continue
-        
+
         residuals = clock_residuals[cl_idx_start:cl_idx_end]
         met0 = met[0]
         met_rescale = (met - met0)/(met[-1] - met0)
@@ -377,7 +378,7 @@ def get_malindi_data_except_when_out(clock_offset_table):
     """
     # Covers 2012/12/20 - 2013/02/08 Malindi outage
     # Also covers 2021/04/28 - 2021/05/06 issues with Malindi clock
-    
+
     no_malindi_intvs = [[93681591, 98051312],[357295300, 357972500]]
     clock_mets = clock_offset_table['met']
 
@@ -1261,16 +1262,16 @@ def plot_scatter(new_clock_table, clock_offset_table, shift_times=0,
     text_top = hv.Div("""
         <p>
         Clock offsets measured at ground station passes throughout
-        the mission (scatter points), compared to the thermal model for clock 
-        delays (line). Different colors indicate different ground stations 
-        (MLD: Malindi; SNG: Singapore; UHI: US Hawaii). 
+        the mission (scatter points), compared to the thermal model for clock
+        delays (line). Different colors indicate different ground stations
+        (MLD: Malindi; SNG: Singapore; UHI: US Hawaii).
         <p>Use the tools on the top right to zoom in the plot.</p>
         """)
 
     text_bottom = hv.Div("""
         <p>
-        Residuals of the clock offsets with respect to the thermal model. 
-        The black lines indicate the local scatter, calculated over a time 
+        Residuals of the clock offsets with respect to the thermal model.
+        The black lines indicate the local scatter, calculated over a time
         span of approximately 5 days. The largest spikes indicate pathological
         intervals.</p>
         <p>
@@ -1279,7 +1280,7 @@ def plot_scatter(new_clock_table, clock_offset_table, shift_times=0,
         these periods, which should account for the typical deviation of the real clock
         delay with respect to the linear interpolation. This results in 1-ms "spikes" in
         the residuals and the rolling averages.
-        </p>        
+        </p>
         <p>Use the tools on the top right to zoom in the plot.</p>
         """)
 
@@ -1383,7 +1384,7 @@ def abs_des_fun(x, b0, b1, b2, b3, t0=77509250):
     return b0 * np.log(b1 * x + 1) + b2 * np.log(b3 * x + 1)
 
 
-def clock_ppm_model(nustar_met, temperature, craig_fit=False):
+def clock_ppm_model(nustar_met, temperature, craig_fit=False, version=None):
     """Improved clock model
 
     Parameters
@@ -1400,17 +1401,15 @@ def clock_ppm_model(nustar_met, temperature, craig_fit=False):
         parameters of the ppm-time relation (long-term clock decay)
 
     """
-    T0 = 13.440
-    #     offset = 13.9158325193 - 0.027918 - 4.608765729063114e-4 -7.463444052344004e-9
-    # offset = 13.8874536353 - 4.095179312091239e-4
-    offset = 13.91877 -0.02020554 # sum the "e" parameter from long term
-    ppm_vs_T_pars = [-0.07413, 0.00158]
-
-    ppm_vs_time_pars = [0.00874492067, 100.255995, -0.251789345,
-                        0.0334934847]
     if craig_fit:
-        offset = 1.3847529679329989e+01
-        ppm_vs_T_pars = [-7.3964896025586133e-02, 1.5055740907563737e-03]
+        version = "craig"
+
+    pars = get_temperature_parameters(version)
+
+    T0 = pars['T0']
+    offset = pars['offset']
+    ppm_vs_T_pars = pars['ppm_vs_T_pars']
+    ppm_vs_time_pars = pars['ppm_vs_time_pars']
 
     temp = (temperature - T0)
     ftemp = offset + ppm_vs_T_pars[0] * temp + \
@@ -1424,7 +1423,7 @@ def clock_ppm_model(nustar_met, temperature, craig_fit=False):
 def temperature_delay(temptable, divisor,
                       met_start=None, met_stop=None,
                       debug=False, craig_fit=False,
-                      time_resolution=10):
+                      time_resolution=10, version=None):
     table_times = temptable['met']
 
     if met_start is None:
@@ -1442,7 +1441,7 @@ def temperature_delay(temptable, divisor,
 
     try:
         ppm_mod = clock_ppm_model(times_fine, temp_fun(times_fine),
-                                  craig_fit=craig_fit)
+                                  craig_fit=craig_fit, version=version)
     except:
         print(times_fine.min(), times_fine.max())
         print(table_times.min(), table_times.max())
@@ -1461,7 +1460,8 @@ def temperature_correction_table(met_start, met_stop,
                                  hdf_dump_file='dump.hdf5',
                                  force_divisor=None,
                                  time_resolution=0.5,
-                                 craig_fit=False):
+                                 craig_fit=False,
+                                 version=None):
     import six
     if hdf_dump_file is not None and os.path.exists(hdf_dump_file):
         log.info(f"Reading cached data from file {hdf_dump_file}")
@@ -1531,7 +1531,7 @@ def temperature_correction_table(met_start, met_stop,
         else:
             delay_function = \
                 temperature_delay(temptable_filt, divisors[i], craig_fit=craig_fit,
-                                  time_resolution=time_resolution)
+                                  time_resolution=time_resolution,version=version)
 
             temp_corr = \
                 delay_function(times_fine) + last_corr - delay_function(last_time)

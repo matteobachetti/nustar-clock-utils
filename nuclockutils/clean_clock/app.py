@@ -33,6 +33,7 @@ import json
 CLOCKFILE='latest_clock.dat'
 TEMPFILE='tcxo_tmp_archive.csv'
 FREQFILE='latest_freq.dat'
+MODELVERSION=None
 
 
 def recalc(outfile='save_all.pickle'):
@@ -72,7 +73,7 @@ def recalc(outfile='save_all.pickle'):
     table_new = temperature_correction_table(
         met_start, met_stop, temptable=temptable_raw,
         freqchange_file=FREQFILE,
-        time_resolution=10, craig_fit=False, hdf_dump_file='dump.hdf5')
+        time_resolution=10, craig_fit=False, hdf_dump_file='dump.hdf5', version=MODELVERSION)
 
     table_new = eliminate_trends_in_residuals(
         table_new, clock_offset_table_corr, gtis,
@@ -356,22 +357,22 @@ def create_app():
                     To navigate the plot, use the Zoom and Pan tools in the graph's
                     menu bar.
                     [Detailed instructions here](https://plot.ly/chart-studio-help/zoom-pan-hover-controls/)
-    
+
                     Choose the lasso or rectangle tool and then select points in any
                     of the three plots to mark them as "bad".
-    
+
                     Select in an empty area to eliminate the current selection.
-    
+
                     To save the current selection in the bad clock offset database,
                     press "Add to blacklist"
-    
+
                     To remove the currently selected point from the bad clock offset database,
                     press "Remove from blacklist"
-    
+
                     When you are done with the selection, press "Recalculate"
-    
+
                     To undo the current selection, press "Reset"
-    
+
                     Light salmon areas indicate known issues like major clock readjustments
                     or times where no temperature measurements are present.
                 """)),
@@ -604,6 +605,7 @@ def main(args=None):
     global TEMPFILE
     global CLOCKFILE
     global FREQFILE
+    global MODELVERSION
     import argparse
     description = ('Clean clock offset measurements with an handy web '
                    'interface.')
@@ -619,6 +621,7 @@ def main(args=None):
                         help="Temperature file (e.g. the nu<OBSID>_eng.hk.gz "
                              "file in the auxil/directory "
                              "or the tp_tcxo*.csv file)")
+    parser.add_argument("--temperature-model-version", default=None, help="Temperature model version")
     args = parser.parse_args(args)
     if args.temperature_file is not None:
         TEMPFILE = args.temperature_file
@@ -626,6 +629,9 @@ def main(args=None):
         CLOCKFILE = args.clock_offset_file
     if args.frequency_file:
         FREQFILE = args.frequency_file
+    if args.temperature_model_version is not None:
+        MODELVERSION = args.temperature_model_version
+
     print("Creating app")
     app = create_app()
     app.run_server(debug=True)
