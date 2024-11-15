@@ -6,10 +6,7 @@ from astropy import log
 import pint.models
 import pint.toa as toa
 from pint.models import StandardTimingModel
-try:
-    from pint.observatory.nustar_obs import NuSTARObs as SatelliteObs
-except ImportError:
-    from pint.observatory.satellite_obs import SatelliteObs
+from pint.observatory.satellite_obs import get_satellite_observatory
 
 from astropy.io import fits
 from astropy.time import Time
@@ -83,11 +80,12 @@ def get_dummy_parfile_for_position(orbfile):
 
 
 def get_barycentric_correction(orbfile, parfile, dt=5, ephem='DE421'):
-    no = SatelliteObs(name="NuSTAR", FPorbname=orbfile, tt2tdb_mode="pint")
+    no = get_satellite_observatory("NuSTAR", orbfile, overwrite=True)
     with fits.open(orbfile) as hdul:
         mjdref = high_precision_keyword_read(hdul[1].header, 'MJDREF')
 
-    mjds = np.arange(no.X.x[1], no.X.x[-2], dt / 86400)
+    knots = no.X.get_knots()
+    mjds = np.arange(knots[1], knots[-2], dt / 86400)
     mets = (mjds - mjdref) * 86400
 
     obs, scale = 'nustar', "tt"
@@ -106,7 +104,6 @@ def get_barycentric_correction(orbfile, parfile, dt=5, ephem='DE421'):
         toalist,
         ephem=ephem,
         include_bipm=False,
-        include_gps=False,
         planets=False,
         tdb_method='default',
     )
@@ -178,12 +175,12 @@ def apply_clock_correction(
             hdu.header['TIMEZERO'] = 0.0
             hdu.header['TREFDIR'] = 'RA_OBJ,DEC_OBJ'
             hdu.header['TREFPOS'] = 'BARYCENTER'
-        hdul.writeto(outfile, overwrite=True)
+        hdul.writeto(outfile, overwrite=overwrite)
 
 
 def _default_out_file(args):
     outfile = 'bary'
-    if not os.path.exists(args.clockfile):
+    if args.clockfile is None or not os.path.exists(args.clockfile):
         outfile += '_noclock'
     if not os.path.exists(args.parfile):
         outfile += '_nopar'

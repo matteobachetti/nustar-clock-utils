@@ -24,12 +24,12 @@ class TestExecution(object):
 
     @pytest.mark.remote_data
     def test_barycorr(self):
-        outfile = main_barycorr([self.evfile, self.orbfile, self.parfile])
+        outfile = main_barycorr([self.evfile, self.orbfile, "-p", self.parfile])
         assert os.path.exists(outfile)
-        with pytest.raises(RuntimeError):
-            main_barycorr([self.evfile, self.orbfile, self.parfile,
+        with pytest.raises(Exception, match="File bary_noclock.evt already exists."):
+            main_barycorr([self.evfile, self.orbfile,  "-p", self.parfile,
                            '-o', outfile])
-        main_barycorr([self.evfile, self.orbfile, self.parfile,
+        main_barycorr([self.evfile, self.orbfile,  "-p", self.parfile,
                        '-o', outfile, '--overwrite'])
 
         os.unlink(outfile)

@@ -2,6 +2,7 @@ import glob
 import os
 import shutil
 from functools import lru_cache
+import traceback
 
 import numpy as np
 from astropy.table import Table, vstack
@@ -879,12 +880,11 @@ class ClockCorrection():
             try:
                 self.adjust_temperature_correction()
             except Exception:
-                import traceback
                 logfile = 'adjust_temperature_error.log'
-                log.warn(f"Temperature adjustment failed. "
-                         f"Full error stack in {logfile}")
+                log.warning(f"Temperature adjustment failed. "
+                            f"Full error stack in {logfile}")
                 with open(logfile, 'w') as fobj:
-                    traceback.print_last(file=logfile)
+                    traceback.print_exc(file=fobj)
 
     def read_temptable(self, cache_temptable_name=None):
         if cache_temptable_name is not None and \
