@@ -12,6 +12,9 @@ from astropy.time import Time
 from scipy.interpolate import interp1d
 from scipy.signal import savgol_filter
 from scipy.ndimage import median_filter
+from scipy.stats import norm
+from scipy.optimize import minimize
+
 from .utils import NUSTAR_MJDREF, splitext_improved, sec_to_mjd
 from .utils import filter_with_region, fix_byteorder, rolling_std
 from .utils import measure_overall_trend, cross_two_gtis, get_rough_trend_fun
@@ -1157,6 +1160,29 @@ def interpolate_clock_function(new_clock_table, mets):
     return cubic_interpolation(x, xtab, ytab, yptab), good_mets
 
 
+def _analyze_residuals(filtered_data, nbins=101, fit_range=[-np.inf, np.inf]):
+    frequencies, edges = np.histogram(
+        filtered_data,
+        bins=np.linspace(-1000, 1500, nbins)
+    )
+    errors = frequencies**0.5
+    errors[errors < 1] = 1
+    renorm = np.sum(frequencies*np.diff(edges))
+    frequencies = frequencies / renorm
+    errors /= renorm
+    edge_centers = (edges[:-1] + edges[1:]) / 2
+    good = np.abs(filtered_data) < 2000
+    stats = {"median": np.median(filtered_data[good]), "std": np.std(filtered_data[good]), "mad": mad(filtered_data[good])}
+
+    inner = ((edge_centers - stats["median"]) > fit_range[0]) & ((edge_centers - stats["median"]) < fit_range[1])
+    fitfunc  = lambda p, x: p[2] * norm(loc=p[0], scale=p[1]).pdf(x)
+    errfunc  = lambda p, x, y, e: np.sum(((y - fitfunc(p, x)) / e)**2)
+    out = minimize(errfunc, [stats["median"], stats["mad"], 1], args=(edge_centers[inner], frequencies[inner], frequencies[inner]**0.5))
+    stats["fit_mean"] = out.x[0]
+    stats["fit_std"] = out.x[1]
+    stats["fit_norm"] = out.x[2]
+    return edges, frequencies, stats
+
 def plot_scatter(new_clock_table, clock_offset_table, shift_times=0,
                  debug=False):
     from bokeh.models import HoverTool
@@ -1215,10 +1241,10 @@ def plot_scatter(new_clock_table, clock_offset_table, shift_times=0,
         color_index='station', alpha=0.5, muted_line_alpha=0.1,
         muted_fill_alpha=0.03).overlay('station')
     plot_0a = hv.Curve(dict(x=clock_mets, y=yint),
-                       group='station', label='Clock corr')
+                       group='station', label='Clock corr').opts(color="k")
 
-    plot_0_all = plot_0.opts(opts.Scatter(width=900, height=350, tools=[hover])).opts(
-                             ylim=(-0.1, 0.8)) * plot_0a
+    plot_0_all = plot_0.opts(opts.Scatter(width=800, height=350, tools=[hover])).opts(
+                             ylim=(-0.1, 0.8), xlim=(77571700, None)) * plot_0a
 
     all_data_res = pd.DataFrame({'met': clock_mets,
                              'mjd': np.array(clock_mjds, dtype=int),
@@ -1251,30 +1277,39 @@ def plot_scatter(new_clock_table, clock_offset_table, shift_times=0,
         opts.Curve(color='k'))
 
     plot_1_all = plot_1.opts(
-        opts.Scatter(width=900, height=350, tools=[hover])).opts(
-                             ylim=(-700, 700)) * plot_1b * plot_1a
+        opts.Scatter(width=800, height=350, tools=[hover])).opts(
+                             ylim=(-700, 700), xlim=(77571700, None)) * plot_1b * plot_1a
 
     plots = []
     list_of_stations = sorted(list(set(all_data_res['station'])))
     stats = {}
     for value in list_of_stations:
         nbins = 101
+        fit_range = [-500, 1500]
         if value == 'MLD':
             nbins = 501
+            fit_range = [-200, 200]
         # from astropy.stats import histogram
         filtered_data = all_data_res[all_data_res['station']==value]['residual']
-        frequencies, edges = np.histogram(
-            filtered_data,
-            bins=np.linspace(-2000, 2000, nbins), density=True
-        )
-        # frequencies, edges = np.histogram(filtered_data, bins="knuth", density=True)
-        good = np.abs(filtered_data) < 2000
-        stats[value] = {"median": np.median(filtered_data[good]), "std": np.std(filtered_data[good]), "mad": mad(filtered_data[good])}
+        edges, frequencies, stats[value] = _analyze_residuals(filtered_data, nbins=nbins, fit_range=fit_range)
 
         plots.append(hv.Histogram((edges, frequencies), label=value).opts(opts.Histogram(alpha=0.3, xlabel="residual (us)", ylabel="Density")))
     plot_2 = hv.Overlay(plots)
-    plot_2.opts(opts.Overlay(width=900, height=350))
 
+    fine_x = np.linspace(-1000, 1500, nbins * 10 + 1)
+    rv = norm(loc=stats["MLD"]["median"], scale=stats["MLD"]["mad"])
+    plot_2b = hv.Curve({'x': fine_x,
+                        'y': rv.pdf(fine_x)},
+                       group='station', label='Raw estimate').opts(
+        opts.Curve(color='grey'))
+
+    rv = norm(loc=stats["MLD"]["fit_mean"], scale=stats["MLD"]["fit_std"])
+    plot_2c = hv.Curve({'x': fine_x,
+                        'y': rv.pdf(fine_x) * stats["MLD"]["fit_norm"]},
+                       group='station', label='Fit').opts(
+        opts.Curve(color='k'))
+
+    plot_2 = (plot_2 * plot_2b * plot_2c).opts(opts.Overlay(width=800, height=350))
     rolling_data = pd.DataFrame({'met':control_points,
                                  'rolling_std':roll_std*1e6})
     rolling_data.to_pickle('rolling_data.pkl')
@@ -1286,7 +1321,7 @@ def plot_scatter(new_clock_table, clock_offset_table, shift_times=0,
         delays (line). Different colors indicate different ground stations
         (MLD: Malindi; SNG: Singapore; UHI: US Hawaii).
         <p>Use the tools on the top right to zoom in the plot.</p>
-        """)
+        """).opts(width=500)
 
     text_bottom = hv.Div("""
         <p>
@@ -1302,20 +1337,33 @@ def plot_scatter(new_clock_table, clock_offset_table, shift_times=0,
         the residuals and the rolling averages.
         </p>
         <p>Use the tools on the top right to zoom in the plot.</p>
-        """)
+        """).opts(width=500)
 
-    stat_str = f"<p>Clock residuals stats:</p>\n"
+    stat_str = """<p>
+        Some statistical information about the residuals. This plot shows the histograms of
+        the residuals and a few statistical indicators that might be used to evaluate the
+        quality of the fit. The median and the median absolute deviations are used as
+        robust proxies for the mean and the standard deviation. This is needed because of the
+        many large outliers that alter the naive estimates of the moments of the distributions.
+        Then, we fit the core of the distributions (the part cleaner from outliers, which is
+        [-150, 200] us for Malindi and [-500, 1500] for the others) with Gaussian curves, using
+        the Poisson error of the histograms as weights. The results are listed in the table and
+        show in the plot.
+        </p>
+        <p>"""
+    stat_str += f"<p>Clock residuals stats (us):</p>\n"
     stat_str += "<table style='width:100%'>\n"
-    stat_str += f"<tr><th>Station</th><th>Median (us)</th><th>STD (us)</th><th>MAD (us)</th></tr>\n"
+    stat_str += f"<tr><th>Station</th><th>Median</th><th>MAD</th><th>Fit mean</th><th>Fit STD</th></tr>\n"
 
     for station, stat in stats.items():
-        stat_str += f"<tr><th>{station}</th><th>{stat['median']:.0f}</th><th>{stat['std']:.0f}</th><th>{stat['mad']:.0f}</th></tr>\n"
+        stat_str += f"<tr><th>{station}</th><th>{stat['median']:.0f}</th><th>{stat['mad']:.0f}</th>"
+        stat_str += f"<th>{stat['fit_mean']:.0f}</th><th>{stat['fit_std']:.0f}</th></tr>"
     stat_str += "</table>"
 
     text_stats = hv.Div(f"""
         <p>{stat_str}
         </p>
-        """)
+        """).opts(width=500)
 
     return hv.Layout((plot_0_all + text_top) +
                      (plot_1_all + text_bottom) +
