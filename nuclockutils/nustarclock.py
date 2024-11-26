@@ -1239,7 +1239,7 @@ def plot_scatter(new_clock_table, clock_offset_table, shift_times=0,
     plot_1 = all_data_res.to.scatter('met', ['residual', 'mjd', 'doy', 'utc'],
                                  groupby='station').options(
         color_index='station', alpha=0.5, muted_line_alpha=0.1,
-        muted_fill_alpha=0.03).overlay('station')
+        muted_fill_alpha=0.03).overlay('station').hist(["residual"])
 
     plot_1b = hv.Curve({'x': new_clock_table['TIME'],
                         'y': new_clock_table['CLOCK_ERR_CORR'] * 1e6},
@@ -1253,6 +1253,27 @@ def plot_scatter(new_clock_table, clock_offset_table, shift_times=0,
     plot_1_all = plot_1.opts(
         opts.Scatter(width=900, height=350, tools=[hover])).opts(
                              ylim=(-700, 700)) * plot_1b * plot_1a
+
+    plots = []
+    list_of_stations = sorted(list(set(all_data_res['station'])))
+    stats = {}
+    for value in list_of_stations:
+        nbins = 101
+        if value == 'MLD':
+            nbins = 501
+        # from astropy.stats import histogram
+        filtered_data = all_data_res[all_data_res['station']==value]['residual']
+        frequencies, edges = np.histogram(
+            filtered_data,
+            bins=np.linspace(-2000, 2000, nbins), density=True
+        )
+        # frequencies, edges = np.histogram(filtered_data, bins="knuth", density=True)
+        good = np.abs(filtered_data) < 2000
+        stats[value] = {"median": np.median(filtered_data[good]), "std": np.std(filtered_data[good]), "mad": mad(filtered_data[good])}
+
+        plots.append(hv.Histogram((edges, frequencies), label=value).opts(opts.Histogram(alpha=0.3, xlabel="residual (us)", ylabel="Density")))
+    plot_2 = hv.Overlay(plots)
+    plot_2.opts(opts.Overlay(width=900, height=350))
 
     rolling_data = pd.DataFrame({'met':control_points,
                                  'rolling_std':roll_std*1e6})
@@ -1283,8 +1304,22 @@ def plot_scatter(new_clock_table, clock_offset_table, shift_times=0,
         <p>Use the tools on the top right to zoom in the plot.</p>
         """)
 
+    stat_str = f"<p>Clock residuals stats:</p>\n"
+    stat_str += "<table style='width:100%'>\n"
+    stat_str += f"<tr><th>Station</th><th>Median (us)</th><th>STD (us)</th><th>MAD (us)</th></tr>\n"
+
+    for station, stat in stats.items():
+        stat_str += f"<tr><th>{station}</th><th>{stat['median']:.0f}</th><th>{stat['std']:.0f}</th><th>{stat['mad']:.0f}</th></tr>\n"
+    stat_str += "</table>"
+
+    text_stats = hv.Div(f"""
+        <p>{stat_str}
+        </p>
+        """)
+
     return hv.Layout((plot_0_all + text_top) +
-                     (plot_1_all + text_bottom)).cols(2)
+                     (plot_1_all + text_bottom) +
+                     plot_2 + text_stats).cols(2)
 
 
 class NuSTARCorr():
@@ -1720,6 +1755,7 @@ def main_update_temptable(args=None):
 
 def main_plot_diagnostics(args=None):
     import argparse
+    import re
     description = ('Plot diagnostic information about the newly produced '
                    'clock file.')
     parser = argparse.ArgumentParser(description=description)
@@ -1732,8 +1768,17 @@ def main_plot_diagnostics(args=None):
     args = parser.parse_args(args)
 
     clock_offset_table = read_clock_offset_table(args.clockoff)
-    plot = plot_scatter(Table.read(args.clockcorr, hdu="NU_FINE_CLOCK"),
-                        clock_offset_table)
+    with fits.open(args.clockcorr) as hdul:
+        data = hdul["NU_FINE_CLOCK"].data
+        header = hdul["NU_FINE_CLOCK"].header
+        shift_times = 0.
+        for comment in header["COMMENT"]:
+            if "A systematic shift" in comment:
+                shift_time_re = re.compile(r".*A systematic shift of ([^ ]+) s was applied.*")
+                shift_times = float(shift_time_re.match(comment).group(1))
+                break
+        data = Table(data)
+    plot = plot_scatter(data, clock_offset_table, shift_times=shift_times)
 
     outfig = args.clockcorr.replace(".gz", "").replace(".fits", "")
     renderer = hv.renderer('bokeh')
