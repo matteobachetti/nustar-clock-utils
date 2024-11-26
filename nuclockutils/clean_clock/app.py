@@ -87,7 +87,6 @@ def recalc(outfile='save_all.pickle'):
 
     good_mets = clock_offset_table['met'] < stop
     clock_offset_table = clock_offset_table[good_mets]
-    # print(clock_offset_table['met'][-10:], table_new['met'][-1])
 
     clock_mets = clock_offset_table['met']
     clock_mjds = clock_offset_table['mjd']

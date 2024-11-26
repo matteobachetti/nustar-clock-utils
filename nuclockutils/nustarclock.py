@@ -861,14 +861,6 @@ class ClockCorrection():
         self.gtis = find_good_time_intervals(
             self.temptable, self.clock_jump_times + 30)
 
-        # table_new = temperature_correction_table(
-        #     met_start, met_stop, temptable=temptable_raw,
-        #     freqchange_file=FREQFILE,
-        #     time_resolution=10, craig_fit=False, hdf_dump_file='dump.hdf5')
-        #
-        # table_new = eliminate_trends_in_residuals(
-        #     table_new, clock_offset_table_corr, gtis)
-
         self.temperature_correction_data = \
             temperature_correction_table(
                 self.met_start, self.met_stop,
@@ -1568,10 +1560,6 @@ def temperature_correction_table(met_start, met_stop,
                               temp_corr=temp_corr,
                               divisor=np.zeros_like(times_fine) + divisors[i]))
 
-        # if np.any(temp_corr != temp_corr):
-        #     log.error("Invalid data in temperature table")
-        #     break
-
         N = len(times_fine)
         table[firstidx:firstidx + N] = new_data
         firstidx = firstidx + N
@@ -1703,7 +1691,6 @@ def main_update_temptable(args=None):
     log.info("Reading new temperature values")
     new_table = read_csv_temptable(temperature_file=args.tempfile,
                                    mjdstart=last_measurement)
-
     if last_measurement is not None:
         new_values = new_table['mjd'] > last_measurement
         if not np.any(new_values):
@@ -1723,6 +1710,7 @@ def main_update_temptable(args=None):
         outfile = os.path.splitext(args.tempfile)[0] + '.hdf5'
 
     log.info(f"Saving to {outfile}")
+
     new_table.write(outfile, path="temptable", overwrite=True)
 
 
