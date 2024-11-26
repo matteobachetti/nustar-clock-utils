@@ -36,7 +36,8 @@ def get_temperature_parameters(version=None):
     elif "v" + version in versions_in_db:
         version = "v" + version
 
-    print("Using version", version, "of the temperature parameters.")
+    log.info("Using version", version, "of the temperature parameters.")
+    log.info(data[version])
     return data[version]
 
 

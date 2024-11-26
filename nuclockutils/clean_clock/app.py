@@ -15,7 +15,7 @@ from nuclockutils.nustarclock import temperature_correction_table, \
 
 from nuclockutils.utils import get_obsid_list_from_heasarc, \
     aggregate_all_tables, merge_and_sort_arrays, eliminate_array_from_array, \
-    find_idxs, filter_dict_with_re
+    find_idxs, filter_dict_with_re, cross_two_gtis
 
 from nuclockutils.nustarclock import load_temptable, load_freq_changes, \
     load_and_flag_clock_table, find_good_time_intervals, calculate_stats, \
@@ -74,6 +74,8 @@ def recalc(outfile='save_all.pickle'):
         met_start, met_stop, temptable=temptable_raw,
         freqchange_file=FREQFILE,
         time_resolution=10, craig_fit=False, hdf_dump_file='dump.hdf5', version=MODELVERSION)
+
+    gtis = cross_two_gtis(gtis, np.asarray([[table_new['met'][0] - 1, table_new['met'][-1] + 1]]))
 
     table_new = eliminate_trends_in_residuals(
         table_new, clock_offset_table_corr, gtis,

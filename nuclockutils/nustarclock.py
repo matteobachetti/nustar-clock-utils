@@ -122,8 +122,11 @@ def load_and_flag_clock_table(clockfile="latest_clock.dat", shift_non_malindi=Fa
 def spline_detrending(clock_offset_table, temptable, outlier_cuts=None,
                       fixed_control_points=None):
     tempcorr_idx = np.searchsorted(temptable['met'], clock_offset_table['met'])
-    tempcorr_idx[tempcorr_idx >= temptable['met'].size] = \
-        temptable['met'].size - 1
+    temperature_is_present = tempcorr_idx < temptable['met'].size
+    tempcorr_idx = tempcorr_idx[temperature_is_present]
+
+    clock_offset_table = clock_offset_table[temperature_is_present]
+
     clock_residuals = \
         np.array(clock_offset_table['offset'] -
                  temptable['temp_corr'][tempcorr_idx])
