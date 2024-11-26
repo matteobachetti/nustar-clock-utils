@@ -104,7 +104,7 @@ def get_barycentric_correction(orbfile, parfile, dt=5, ephem='DE421'):
         toalist,
         ephem=ephem,
         include_bipm=False,
-        planets=False,
+        planets="PLANET_SHAPIRO" in modelin.params and modelin.PLANET_SHAPIRO.value,
         tdb_method='default',
     )
     bats = modelin.get_barycentric_toas(ts)
