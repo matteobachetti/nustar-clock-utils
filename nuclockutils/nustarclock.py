@@ -1172,12 +1172,19 @@ def _analyze_residuals(filtered_data, nbins=101, fit_range=[-np.inf, np.inf]):
     errors /= renorm
     edge_centers = (edges[:-1] + edges[1:]) / 2
     good = np.abs(filtered_data) < 2000
-    stats = {"median": np.median(filtered_data[good]), "std": np.std(filtered_data[good]), "mad": mad(filtered_data[good])}
+    stats = {"median": np.median(filtered_data[good]), "mad": mad(filtered_data[good])}
 
-    inner = ((edge_centers - stats["median"]) > fit_range[0]) & ((edge_centers - stats["median"]) < fit_range[1])
-    fitfunc  = lambda p, x: p[2] * norm(loc=p[0], scale=p[1]).pdf(x)
-    errfunc  = lambda p, x, y, e: np.sum(((y - fitfunc(p, x)) / e)**2)
-    out = minimize(errfunc, [stats["median"], stats["mad"], 1], args=(edge_centers[inner], frequencies[inner], frequencies[inner]**0.5))
+    inner = (edge_centers > fit_range[0]) & (edge_centers < fit_range[1])
+    def fitfunc(p, x):
+        if p[2] < 0:
+            return np.inf
+        return p[2] * norm(loc=p[0], scale=p[1]).pdf(x)
+
+    def errfunc(p, x, y, e):
+        res = np.sum(((y - fitfunc(p, x)) / e)**2)
+        return res
+
+    out = minimize(errfunc, [stats["median"], stats["mad"], 1], args=(edge_centers[inner], frequencies[inner], errors[inner]))
     stats["fit_mean"] = out.x[0]
     stats["fit_std"] = out.x[1]
     stats["fit_norm"] = out.x[2]
@@ -1283,17 +1290,18 @@ def plot_scatter(new_clock_table, clock_offset_table, shift_times=0,
     plots = []
     list_of_stations = sorted(list(set(all_data_res['station'])))
     stats = {}
-    for value in list_of_stations:
+    for station in list_of_stations:
+        print(station)
         nbins = 101
         fit_range = [-500, 1500]
-        if value == 'MLD':
+        if station == 'MLD':
             nbins = 501
             fit_range = [-200, 200]
         # from astropy.stats import histogram
-        filtered_data = all_data_res[all_data_res['station']==value]['residual']
-        edges, frequencies, stats[value] = _analyze_residuals(filtered_data, nbins=nbins, fit_range=fit_range)
+        filtered_data = all_data_res[all_data_res['station']==station]['residual']
+        edges, frequencies, stats[station] = _analyze_residuals(filtered_data, nbins=nbins, fit_range=fit_range)
 
-        plots.append(hv.Histogram((edges, frequencies), label=value).opts(opts.Histogram(alpha=0.3, xlabel="residual (us)", ylabel="Density")))
+        plots.append(hv.Histogram((edges, frequencies), label=station).opts(opts.Histogram(alpha=0.3, xlabel="residual (us)", ylabel="Density")))
     plot_2 = hv.Overlay(plots)
 
     fine_x = np.linspace(-1000, 1500, nbins * 10 + 1)
