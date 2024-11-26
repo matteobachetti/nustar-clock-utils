@@ -1384,7 +1384,7 @@ def abs_des_fun(x, b0, b1, b2, b3, t0=77509250):
     return b0 * np.log(b1 * x + 1) + b2 * np.log(b3 * x + 1)
 
 
-def clock_ppm_model(nustar_met, temperature, craig_fit=False, version=None):
+def clock_ppm_model(nustar_met, temperature, craig_fit=False, version=None, pars=None):
     """Improved clock model
 
     Parameters
@@ -1399,12 +1399,16 @@ def clock_ppm_model(nustar_met, temperature, craig_fit=False, version=None):
         parameters of the ppm-temperature relation
     ppm_vs_T_pars : list
         parameters of the ppm-time relation (long-term clock decay)
-
+    version : str
+        Version of the model to use. If None, use the latest
+    pars : dict
+        Parameters of the model, forced to be used
     """
     if craig_fit:
         version = "craig"
 
-    pars = get_temperature_parameters(version)
+    if pars is None:
+        pars = get_temperature_parameters(version)
 
     T0 = pars['T0']
     offset = pars['offset']
@@ -1423,7 +1427,7 @@ def clock_ppm_model(nustar_met, temperature, craig_fit=False, version=None):
 def temperature_delay(temptable, divisor,
                       met_start=None, met_stop=None,
                       debug=False, craig_fit=False,
-                      time_resolution=10, version=None):
+                      time_resolution=10, version=None, pars=None):
     table_times = temptable['met']
 
     if met_start is None:
@@ -1441,10 +1445,14 @@ def temperature_delay(temptable, divisor,
 
     try:
         ppm_mod = clock_ppm_model(times_fine, temp_fun(times_fine),
-                                  craig_fit=craig_fit, version=version)
+                                  craig_fit=craig_fit, version=version, pars=pars)
     except:
-        print(times_fine.min(), times_fine.max())
-        print(table_times.min(), table_times.max())
+        error_msg = f"""
+        Error in clock_ppm_model:
+        Times: {times_fine.min()} - {times_fine.max()}
+        Table times: {table_times.min()} - {table_times.max()}
+        """
+        log.error(error_msg)
         raise
 
     clock_rate_corr = (1 + ppm_mod / 1000000) * 24000000 / divisor - 1
@@ -1461,7 +1469,8 @@ def temperature_correction_table(met_start, met_stop,
                                  force_divisor=None,
                                  time_resolution=0.5,
                                  craig_fit=False,
-                                 version=None):
+                                 version=None,
+                                 pars=None):
     import six
     if hdf_dump_file is not None and os.path.exists(hdf_dump_file):
         log.info(f"Reading cached data from file {hdf_dump_file}")
@@ -1546,7 +1555,7 @@ def temperature_correction_table(met_start, met_stop,
 
         delay_function = \
             temperature_delay(temptable_filt, divisors[i], craig_fit=craig_fit,
-                                time_resolution=time_resolution,version=version)
+                                time_resolution=time_resolution,version=version, pars=pars)
 
         temp_corr = \
             delay_function(times_fine) + last_corr - delay_function(last_time)

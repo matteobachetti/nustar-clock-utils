@@ -1,4 +1,5 @@
 
+from functools import lru_cache
 import os
 import numpy as np
 import copy
@@ -13,6 +14,7 @@ from numba import vectorize
 NUSTAR_MJDREF = np.longdouble("55197.00076601852")
 
 
+@lru_cache(maxsize=64)
 def get_temperature_parameters(version=None):
     """Read the temperature parameters from the database."""
     import yaml
