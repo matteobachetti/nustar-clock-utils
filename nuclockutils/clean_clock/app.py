@@ -94,6 +94,7 @@ def recalc(outfile='save_all.pickle'):
 
     tempcorr_idx = \
         np.searchsorted(table_new['met'], clock_offset_table['met'])
+
     clock_residuals = \
         np.array(
             clock_offset_table['offset'] - table_new['temp_corr'][tempcorr_idx]

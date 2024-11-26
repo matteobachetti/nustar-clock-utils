@@ -181,8 +181,10 @@ def eliminate_trends_in_residuals(temp_table, clock_offset_table,
 
     tempcorr_idx = np.searchsorted(temp_table['met'],
                                    clock_offset_table['met'])
-    tempcorr_idx[tempcorr_idx == temp_table['met'].size] = \
-        temp_table['met'].size - 1
+    temperature_is_present = tempcorr_idx < temp_table['met'].size
+    tempcorr_idx = tempcorr_idx[temperature_is_present]
+
+    clock_offset_table = clock_offset_table[temperature_is_present]
 
     clock_residuals = \
         clock_offset_table['offset'] - temp_table['temp_corr'][tempcorr_idx]
@@ -928,8 +930,10 @@ class ClockCorrection():
 
         tempcorr_idx = np.searchsorted(table_new['met'],
                                        clock_offset_table['met'])
-        tempcorr_idx[tempcorr_idx >= table_new['met'].size] = \
-            table_new['met'].size -1
+        temperature_is_present = tempcorr_idx < table_new['met'].size
+        tempcorr_idx = tempcorr_idx[temperature_is_present]
+
+        clock_offset_table = clock_offset_table[temperature_is_present]
 
         clock_residuals_detrend = clock_offset_table['offset'] - \
                                   table_new['temp_corr'][tempcorr_idx]
