@@ -1358,20 +1358,17 @@ def plot_scatter(new_clock_table, clock_offset_table, shift_times=0,
         the Poisson error of the histograms as weights. The results are listed in the table and
         show in the plot.
         </p>
-        <p>"""
+        <div style="overflow-x:auto;text-align:center;">"""
     stat_str += f"<p>Clock residuals stats (us):</p>\n"
-    stat_str += "<table style='width:100%'>\n"
+    stat_str += "<table style='width:100%;th.border:1px solid;'>\n"
     stat_str += f"<tr><th>Station</th><th>Median</th><th>MAD</th><th>Fit mean</th><th>Fit STD</th></tr>\n"
 
     for station, stat in stats.items():
-        stat_str += f"<tr><th>{station}</th><th>{stat['median']:.0f}</th><th>{stat['mad']:.0f}</th>"
-        stat_str += f"<th>{stat['fit_mean']:.0f}</th><th>{stat['fit_std']:.0f}</th></tr>"
-    stat_str += "</table>"
+        stat_str += f"<tr><th>{station}</th><td>{stat['median']:.0f}</td><td>{stat['mad']:.0f}</td>"
+        stat_str += f"<td>{stat['fit_mean']:.0f}</td><td>{stat['fit_std']:.0f}</td></tr>"
+    stat_str += "</table></div>"
 
-    text_stats = hv.Div(f"""
-        <p>{stat_str}
-        </p>
-        """).opts(width=500)
+    text_stats = hv.Div(f"{stat_str}").opts(width=500)
 
     return hv.Layout((plot_0_all + text_top) +
                      (plot_1_all + text_bottom) +
