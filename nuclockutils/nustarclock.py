@@ -319,7 +319,6 @@ def eliminate_trends_in_residuals(temp_table, clock_offset_table,
         table_new['temp_corr'][:] = clock_off_fun(table_new['met'])
 
     log.info("Final detrending...")
-
     table_new = spline_detrending(
         clock_offset_table, temp_table,
         outlier_cuts=[-0.002, -0.001],
@@ -851,6 +850,7 @@ class ClockCorrection():
             np.array([78708320, 79657575, 81043985, 82055671, 293346772,
             392200784, 394825882, 395304135,407914525, 408299422])
         self.fixed_control_points = np.arange(291e6, 295e6, 86400)
+
         #  Sum 30 seconds to avoid to exclude these points
         #  from previous interval
         self.gtis = find_good_time_intervals(
@@ -979,7 +979,8 @@ class ClockCorrection():
                 idx0, idx1 = np.searchsorted(
                     allmets, [jumptime - twodays, jumptime + twodays])
                 # print(idx0, idx1)
-                good_for_clockfile[idx0:idx1:10] = True
+
+                good_for_clockfile[idx0:idx1] = True
             new_clock_table_subsample = new_clock_table[good_for_clockfile]
         else:
             new_clock_table_subsample = new_clock_table
@@ -1400,14 +1401,56 @@ def clock_ppm_model(nustar_met, temperature, craig_fit=False):
         parameters of the ppm-time relation (long-term clock decay)
 
     """
+
+    # Parameters([('b0',
+    #              <Parameter 'b0', value=0.00881627228 (fixed), bounds=[0:inf]>),
+    #             ('b1', <Parameter 'b1', value=95.9392102 (fixed), bounds=[0:inf]>),
+    #             ('b2',
+    #              <Parameter 'b2', value=-0.224413446 (fixed), bounds=[-inf:0]>),
+    #             ('b3',
+    #              <Parameter 'b3', value=0.0382542123 (fixed), bounds=[0:inf]>),
+    #             ('e',
+    #              <Parameter 'e', value=-0.01877278059005673 +/- 5.17e-05, bounds=[-inf:inf]>),
+    #             ('__lnsigma',
+    #              <Parameter '__lnsigma', value=-5.4061409197641535 +/- 0.0081, bounds=[-9.210340371976182:-4.605170185988
+
+    # a0 	-0.07408473 	4.8844e-05 	(0.07%) 	-0.07395161774247343 	-0.08000000 	-0.06000000 	True
+    # a1 	0.00157866 	2.6408e-05 	(1.67%) 	0.001701982761160454 	-inf 	inf 	True
+    # c 	0.00108028 	5.9741e-05 	(5.53%) 	0.0009251728994994087 	-inf 	inf 	True
+
+    # __lnsigma
+    # [[Variables]]
+    # b0: 0.008816272(fixed)
+    # b1: 95.93921(fixed)
+    # b2: -0.2244134(fixed)
+    # b3: 0.03825421(fixed)
+    # e: -0.01875000(init=0.01)
+
     T0 = 13.440
-    #     offset = 13.9158325193 - 0.027918 - 4.608765729063114e-4 -7.463444052344004e-9
-    # offset = 13.8874536353 - 4.095179312091239e-4
-    offset = 13.91877 -0.02020554 # sum the "e" parameter from long term
+
+    # #     offset = 13.9158325193 - 0.027918 - 4.608765729063114e-4 -7.463444052344004e-9
+    # # offset = 13.8874536353 - 4.095179312091239e-4
+    # Solution with ref_f0 = 24000000
+    # offset = 13.91877 -0.02020554 # sum the "e" parameter from long term
+    # ppm_vs_T_pars = [-0.07408473, 0.00157866]
+    #
+    # ppm_vs_time_pars = [0.00874492067, 100.255995, -0.251789345,
+    #                     0.0334934847]
+    # Solution with ref_f0 = 24000334
+    offset = 0.00108028 -0.01877278059005673 # sum the "e" parameter from long term
+
     ppm_vs_T_pars = [-0.07413, 0.00158]
 
-    ppm_vs_time_pars = [0.00874492067, 100.255995, -0.251789345,
-                        0.0334934847]
+    ppm_vs_time_pars = [0.00881627228, 95.9392102, -0.224413446,
+                        0.0382542123]
+    # # Solution with ref_f0 = divisor
+    # offset = -0.24891560 -0.01877306331788237 # sum the "e" parameter from long term
+    # T0 = 13.4345218
+    # ppm_vs_T_pars = [-0.07408470, 0.00157877]
+    #
+    # ppm_vs_time_pars = [0.00881627228, 95.9392102, -0.224413446,
+    #                     0.0382542123]
+
     if craig_fit:
         offset = 1.3847529679329989e+01
         ppm_vs_T_pars = [-7.3964896025586133e-02, 1.5055740907563737e-03]
@@ -1448,8 +1491,10 @@ def temperature_delay(temptable, divisor,
         print(table_times.min(), table_times.max())
         raise
 
-    clock_rate_corr = (1 + ppm_mod / 1000000) * 24000000 / divisor - 1
-
+    # clock_rate_corr = (1 + ppm_mod / 1000000) * 24000000 / divisor - 1
+    clock_rate_corr = (1 + ppm_mod / 1000000) * 24000334 / divisor - 1
+    # clock_rate_corr = (1 + ppm_mod / 1000000) - 1
+    # print(clock_rate_corr)
     delay_sim = simpcumquad(times_fine, clock_rate_corr)
     return interp1d(times_fine, delay_sim, fill_value='extrapolate',
                     bounds_error=False)
