@@ -209,7 +209,7 @@ def plot_dash(all_data, table_new, gti, all_nustar_obs,
 
     all_nustar_obs_reindex = all_nustar_obs[idx]
 
-    text = np.array([f"MJD {sec_to_mjd(met)}<br>UT {sec_to_ut(met)}<br><br>{string}" for met, string in zip(table_new["met"], all_nustar_obs_reindex['text'])])
+    text = np.array([f"MJD {sec_to_mjd(met)}<br>UT {sec_to_ut(met)}<br><br>{string}" for met, string in zip(all_data["met"], all_nustar_obs_reindex['text'])])
 
     fig.append_trace(go.Scattergl({
         'x': all_data['met'][bad],
