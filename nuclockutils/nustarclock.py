@@ -156,7 +156,7 @@ def spline_detrending(clock_offset_table, temptable, outlier_cuts=None,
         clock_residuals = clock_residuals[better_points]
 
     detrend_fun = spline_through_data(
-        clock_offset_table['met'], clock_residuals, downsample=20,
+        clock_offset_table['met'], clock_residuals, downsample=10,
         fixed_control_points=fixed_control_points)
 
     r_std = residual_roll_std(
