@@ -15,7 +15,7 @@ from nuclockutils.nustarclock import temperature_correction_table, \
 
 from nuclockutils.utils import get_obsid_list_from_heasarc, \
     aggregate_all_tables, merge_and_sort_arrays, eliminate_array_from_array, \
-    find_idxs, filter_dict_with_re, cross_two_gtis
+    find_idxs, filter_dict_with_re, cross_two_gtis, sec_to_mjd, sec_to_ut
 
 from nuclockutils.nustarclock import load_temptable, load_freq_changes, \
     load_and_flag_clock_table, find_good_time_intervals, calculate_stats, \
@@ -147,8 +147,7 @@ def plot_dash(all_data, table_new, gti, all_nustar_obs,
 
     bad = all_data['flag'] == True
 
-    hovertemplate=('MET: %{x:d}<br><br>'
-                   '<b>Current observation:</b><br>'
+    hovertemplate=('MET: %{x:d}<br>'
                    '%{text}')
 
     # Add a final line to include overflow point
@@ -162,13 +161,14 @@ def plot_dash(all_data, table_new, gti, all_nustar_obs,
     idx = np.searchsorted(all_nustar_obs['MET'][1:], table_new['met'])
 
     all_nustar_obs_reindex = all_nustar_obs[idx]
+    text = np.array([f"MJD {sec_to_mjd(met)}<br>UT {sec_to_ut(met)}<br><br>{string}" for met, string in zip(table_new["met"], all_nustar_obs_reindex['text'])])
 
     fig = make_subplots(3, 1, shared_xaxes=True, vertical_spacing=0.02)
     fig.append_trace(go.Scattergl({
         'x': table_new['met'],
         'y': table_new['temp_corr_raw'] * 1e3,
         'hovertemplate': hovertemplate,
-        'text': all_nustar_obs_reindex['text'],
+        'text': text,
         'mode': 'lines',
         'name': f'Temperature correction raw',
         'marker': {'color': 'grey', 'opacity': 0.5}
@@ -177,7 +177,7 @@ def plot_dash(all_data, table_new, gti, all_nustar_obs,
         'x': table_new['met'],
         'y': table_new['temp_corr'] * 1e3,
         'hovertemplate': hovertemplate,
-        'text': all_nustar_obs_reindex['text'],
+        'text': text,
         'mode': 'lines',
         'name': f'Temperature correction',
         'marker': {'color': 'black'}
@@ -186,7 +186,7 @@ def plot_dash(all_data, table_new, gti, all_nustar_obs,
         'x': table_new['met'],
         'y': table_new['temp_corr_trend'] * 1e3,
         'hovertemplate': hovertemplate,
-        'text': all_nustar_obs_reindex['text'],
+        'text': text,
         'mode': 'lines',
         'showlegend': False,
         'marker': {'color':'black'}
@@ -196,7 +196,7 @@ def plot_dash(all_data, table_new, gti, all_nustar_obs,
             'x': table_new['met'],
             'y': sign * table_new['std'] * 1e3,
             'hovertemplate': hovertemplate,
-            'text': all_nustar_obs_reindex['text'],
+            'text': text,
             'mode': 'lines',
             'showlegend': False,
             'marker': {'color':'black'}
@@ -209,11 +209,13 @@ def plot_dash(all_data, table_new, gti, all_nustar_obs,
 
     all_nustar_obs_reindex = all_nustar_obs[idx]
 
+    text = np.array([f"MJD {sec_to_mjd(met)}<br>UT {sec_to_ut(met)}<br><br>{string}" for met, string in zip(table_new["met"], all_nustar_obs_reindex['text'])])
+
     fig.append_trace(go.Scattergl({
         'x': all_data['met'][bad],
         'y': all_data['offset'][bad] * 1e3,
         'hovertemplate': hovertemplate,
-        'text': all_nustar_obs_reindex['text'][bad],
+        'text': text[bad],
         'mode': 'markers',
         'name': f'Bad clock offset measurements',
         'marker': {'color': 'grey', 'symbol': "x-dot", 'size': 3}
@@ -226,7 +228,7 @@ def plot_dash(all_data, table_new, gti, all_nustar_obs,
             'x': all_data_bad['met'],
             'y': all_data_bad[ydata] * 1e3,
             'hovertemplate': hovertemplate,
-            'text': all_nustar_obs_reindex['text'][bad],
+            'text': text[bad],
             'mode': 'markers',
             'showlegend': False,
             'marker': {'color': 'grey', 'symbol': "x-dot", 'size': 3}
@@ -239,7 +241,7 @@ def plot_dash(all_data, table_new, gti, all_nustar_obs,
             'x': all_data_good['met'],
             'y': all_data_good['offset'] * 1e3,
             'hovertemplate': hovertemplate,
-            'text': all_nustar_obs_reindex['text'][good],
+            'text': text[good],
             'mode': 'markers',
             'marker': {'color': color, 'size': 3},
             'name': f'Clock offset - {station}'
@@ -249,7 +251,7 @@ def plot_dash(all_data, table_new, gti, all_nustar_obs,
                 'x': all_data_good['met'],
                 'y': all_data_good[ydata] * 1e3,
                 'hovertemplate': hovertemplate,
-                'text': all_nustar_obs_reindex['text'][good],
+                'text': text[good],
                 'showlegend': False,
                 'mode': 'markers',
                 'marker': {'color': color, 'size': 3}

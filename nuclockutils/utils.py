@@ -59,6 +59,15 @@ def mjd_to_sec(mjd, mjdref=NUSTAR_MJDREF, dtype=np.double):
     return np.array((np.asarray(mjd) - mjdref) * 86400, dtype=dtype)
 
 
+def sec_to_ut(time, mjdref=NUSTAR_MJDREF, dtype=np.double):
+    return Time(sec_to_mjd(time, mjdref, dtype), format="mjd").isot
+
+
+def ut_to_sec(isot, mjdref=NUSTAR_MJDREF, dtype=np.double):
+    time = Time(isot)
+    return np.array((np.asarray(time.mjd) - mjdref) * 86400, dtype=dtype)
+
+
 def splitext_improved(path):
     """
     Examples
