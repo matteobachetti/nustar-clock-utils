@@ -1,3 +1,6 @@
+
+from functools import lru_cache
+import os
 import numpy as np
 import copy
 from astropy import log
@@ -9,6 +12,33 @@ from numba import vectorize
 
 
 NUSTAR_MJDREF = np.longdouble("55197.00076601852")
+
+
+@lru_cache(maxsize=64)
+def get_temperature_parameters(version=None):
+    """Read the temperature parameters from the database."""
+    import yaml
+
+    datadir = os.path.join(os.path.dirname(__file__), "data")
+    if version is None:
+        version = "latest"
+    version = str(version)
+
+    with open(os.path.join(datadir, "temperature_parameters.yaml")) as stream:
+        try:
+            data = yaml.safe_load(stream)
+        except yaml.YAMLError as exc:
+            print(exc)
+    versions_in_db = list(data.keys())
+    if version not in versions_in_db and "v" + version not in versions_in_db:
+        raise ValueError(f"Version {version} not in database. "
+                         f"Available versions: {versions_in_db}")
+    elif "v" + version in versions_in_db:
+        version = "v" + version
+
+    log.info(f"Using version {version} of the temperature parameters.")
+    log.info(f"{data[version]}")
+    return data[version]
 
 
 def fix_byteorder(table):
@@ -23,6 +53,19 @@ def fix_byteorder(table):
 
 def sec_to_mjd(time, mjdref=NUSTAR_MJDREF, dtype=np.double):
     return np.array(np.asarray(time) / 86400 + mjdref, dtype=dtype)
+
+
+def mjd_to_sec(mjd, mjdref=NUSTAR_MJDREF, dtype=np.double):
+    return np.array((np.asarray(mjd) - mjdref) * 86400, dtype=dtype)
+
+
+def sec_to_ut(time, mjdref=NUSTAR_MJDREF, dtype=np.double):
+    return Time(sec_to_mjd(time, mjdref, dtype), format="mjd").isot
+
+
+def ut_to_sec(isot, mjdref=NUSTAR_MJDREF, dtype=np.double):
+    time = Time(isot)
+    return np.array((np.asarray(time.mjd) - mjdref) * 86400, dtype=dtype)
 
 
 def splitext_improved(path):

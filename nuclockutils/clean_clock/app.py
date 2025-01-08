@@ -15,7 +15,7 @@ from nuclockutils.nustarclock import temperature_correction_table, \
 
 from nuclockutils.utils import get_obsid_list_from_heasarc, \
     aggregate_all_tables, merge_and_sort_arrays, eliminate_array_from_array, \
-    find_idxs, filter_dict_with_re
+    find_idxs, filter_dict_with_re, cross_two_gtis, sec_to_mjd, sec_to_ut
 
 from nuclockutils.nustarclock import load_temptable, load_freq_changes, \
     load_and_flag_clock_table, find_good_time_intervals, calculate_stats, \
@@ -33,6 +33,7 @@ import json
 CLOCKFILE='latest_clock.dat'
 TEMPFILE='tcxo_tmp_archive.csv'
 FREQFILE='latest_freq.dat'
+MODELVERSION=None
 
 
 def recalc(outfile='save_all.pickle'):
@@ -72,7 +73,9 @@ def recalc(outfile='save_all.pickle'):
     table_new = temperature_correction_table(
         met_start, met_stop, temptable=temptable_raw,
         freqchange_file=FREQFILE,
-        time_resolution=10, craig_fit=False, hdf_dump_file='dump.hdf5')
+        time_resolution=10, craig_fit=False, hdf_dump_file='dump.hdf5', version=MODELVERSION)
+
+    gtis = cross_two_gtis(gtis, np.asarray([[table_new['met'][0] - 1, table_new['met'][-1] + 1]]))
 
     table_new = eliminate_trends_in_residuals(
         table_new, clock_offset_table_corr, gtis,
@@ -84,7 +87,6 @@ def recalc(outfile='save_all.pickle'):
 
     good_mets = clock_offset_table['met'] < stop
     clock_offset_table = clock_offset_table[good_mets]
-    # print(clock_offset_table['met'][-10:], table_new['met'][-1])
 
     clock_mets = clock_offset_table['met']
     clock_mjds = clock_offset_table['mjd']
@@ -92,6 +94,7 @@ def recalc(outfile='save_all.pickle'):
 
     tempcorr_idx = \
         np.searchsorted(table_new['met'], clock_offset_table['met'])
+
     clock_residuals = \
         np.array(
             clock_offset_table['offset'] - table_new['temp_corr'][tempcorr_idx]
@@ -144,8 +147,7 @@ def plot_dash(all_data, table_new, gti, all_nustar_obs,
 
     bad = all_data['flag'] == True
 
-    hovertemplate=('MET: %{x:d}<br><br>'
-                   '<b>Current observation:</b><br>'
+    hovertemplate=('MET: %{x:d}<br>'
                    '%{text}')
 
     # Add a final line to include overflow point
@@ -159,13 +161,14 @@ def plot_dash(all_data, table_new, gti, all_nustar_obs,
     idx = np.searchsorted(all_nustar_obs['MET'][1:], table_new['met'])
 
     all_nustar_obs_reindex = all_nustar_obs[idx]
+    text = np.array([f"MJD {sec_to_mjd(met)}<br>UT {sec_to_ut(met)}<br><br>{string}" for met, string in zip(table_new["met"], all_nustar_obs_reindex['text'])])
 
     fig = make_subplots(3, 1, shared_xaxes=True, vertical_spacing=0.02)
     fig.append_trace(go.Scattergl({
         'x': table_new['met'],
         'y': table_new['temp_corr_raw'] * 1e3,
         'hovertemplate': hovertemplate,
-        'text': all_nustar_obs_reindex['text'],
+        'text': text,
         'mode': 'lines',
         'name': f'Temperature correction raw',
         'marker': {'color': 'grey', 'opacity': 0.5}
@@ -174,7 +177,7 @@ def plot_dash(all_data, table_new, gti, all_nustar_obs,
         'x': table_new['met'],
         'y': table_new['temp_corr'] * 1e3,
         'hovertemplate': hovertemplate,
-        'text': all_nustar_obs_reindex['text'],
+        'text': text,
         'mode': 'lines',
         'name': f'Temperature correction',
         'marker': {'color': 'black'}
@@ -183,7 +186,7 @@ def plot_dash(all_data, table_new, gti, all_nustar_obs,
         'x': table_new['met'],
         'y': table_new['temp_corr_trend'] * 1e3,
         'hovertemplate': hovertemplate,
-        'text': all_nustar_obs_reindex['text'],
+        'text': text,
         'mode': 'lines',
         'showlegend': False,
         'marker': {'color':'black'}
@@ -193,7 +196,7 @@ def plot_dash(all_data, table_new, gti, all_nustar_obs,
             'x': table_new['met'],
             'y': sign * table_new['std'] * 1e3,
             'hovertemplate': hovertemplate,
-            'text': all_nustar_obs_reindex['text'],
+            'text': text,
             'mode': 'lines',
             'showlegend': False,
             'marker': {'color':'black'}
@@ -206,11 +209,13 @@ def plot_dash(all_data, table_new, gti, all_nustar_obs,
 
     all_nustar_obs_reindex = all_nustar_obs[idx]
 
+    text = np.array([f"MJD {sec_to_mjd(met)}<br>UT {sec_to_ut(met)}<br><br>{string}" for met, string in zip(all_data["met"], all_nustar_obs_reindex['text'])])
+
     fig.append_trace(go.Scattergl({
         'x': all_data['met'][bad],
         'y': all_data['offset'][bad] * 1e3,
         'hovertemplate': hovertemplate,
-        'text': all_nustar_obs_reindex['text'][bad],
+        'text': text[bad],
         'mode': 'markers',
         'name': f'Bad clock offset measurements',
         'marker': {'color': 'grey', 'symbol': "x-dot", 'size': 3}
@@ -223,7 +228,7 @@ def plot_dash(all_data, table_new, gti, all_nustar_obs,
             'x': all_data_bad['met'],
             'y': all_data_bad[ydata] * 1e3,
             'hovertemplate': hovertemplate,
-            'text': all_nustar_obs_reindex['text'][bad],
+            'text': text[bad],
             'mode': 'markers',
             'showlegend': False,
             'marker': {'color': 'grey', 'symbol': "x-dot", 'size': 3}
@@ -236,7 +241,7 @@ def plot_dash(all_data, table_new, gti, all_nustar_obs,
             'x': all_data_good['met'],
             'y': all_data_good['offset'] * 1e3,
             'hovertemplate': hovertemplate,
-            'text': all_nustar_obs_reindex['text'][good],
+            'text': text[good],
             'mode': 'markers',
             'marker': {'color': color, 'size': 3},
             'name': f'Clock offset - {station}'
@@ -246,7 +251,7 @@ def plot_dash(all_data, table_new, gti, all_nustar_obs,
                 'x': all_data_good['met'],
                 'y': all_data_good[ydata] * 1e3,
                 'hovertemplate': hovertemplate,
-                'text': all_nustar_obs_reindex['text'][good],
+                'text': text[good],
                 'showlegend': False,
                 'mode': 'markers',
                 'marker': {'color': color, 'size': 3}
@@ -356,22 +361,22 @@ def create_app():
                     To navigate the plot, use the Zoom and Pan tools in the graph's
                     menu bar.
                     [Detailed instructions here](https://plot.ly/chart-studio-help/zoom-pan-hover-controls/)
-    
+
                     Choose the lasso or rectangle tool and then select points in any
                     of the three plots to mark them as "bad".
-    
+
                     Select in an empty area to eliminate the current selection.
-    
+
                     To save the current selection in the bad clock offset database,
                     press "Add to blacklist"
-    
+
                     To remove the currently selected point from the bad clock offset database,
                     press "Remove from blacklist"
-    
+
                     When you are done with the selection, press "Recalculate"
-    
+
                     To undo the current selection, press "Reset"
-    
+
                     Light salmon areas indicate known issues like major clock readjustments
                     or times where no temperature measurements are present.
                 """)),
@@ -604,6 +609,7 @@ def main(args=None):
     global TEMPFILE
     global CLOCKFILE
     global FREQFILE
+    global MODELVERSION
     import argparse
     description = ('Clean clock offset measurements with an handy web '
                    'interface.')
@@ -619,6 +625,7 @@ def main(args=None):
                         help="Temperature file (e.g. the nu<OBSID>_eng.hk.gz "
                              "file in the auxil/directory "
                              "or the tp_tcxo*.csv file)")
+    parser.add_argument("--temperature-model-version", default=None, help="Temperature model version")
     args = parser.parse_args(args)
     if args.temperature_file is not None:
         TEMPFILE = args.temperature_file
@@ -626,6 +633,9 @@ def main(args=None):
         CLOCKFILE = args.clock_offset_file
     if args.frequency_file:
         FREQFILE = args.frequency_file
+    if args.temperature_model_version is not None:
+        MODELVERSION = args.temperature_model_version
+
     print("Creating app")
     app = create_app()
     app.run_server(debug=True)

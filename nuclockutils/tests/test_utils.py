@@ -1,9 +1,9 @@
 import pytest
-from astropy.tests.helper import remote_data
+
 from nuclockutils.utils import get_obsid_list_from_heasarc
 
 
-@remote_data
+@pytest.mark.remote_data
 def test_get_obsid_list():
     table = get_obsid_list_from_heasarc()
     assert 'MET' in table.colnames

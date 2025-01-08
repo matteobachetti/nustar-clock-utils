@@ -2,6 +2,7 @@ import glob
 import os
 import shutil
 from functools import lru_cache
+import traceback
 
 import numpy as np
 from astropy.table import Table, vstack
@@ -11,10 +12,14 @@ from astropy.time import Time
 from scipy.interpolate import interp1d
 from scipy.signal import savgol_filter
 from scipy.ndimage import median_filter
+from scipy.stats import norm
+from scipy.optimize import minimize
+
 from .utils import NUSTAR_MJDREF, splitext_improved, sec_to_mjd
 from .utils import filter_with_region, fix_byteorder, rolling_std
 from .utils import measure_overall_trend, cross_two_gtis, get_rough_trend_fun
 from .utils import spline_through_data, cubic_interpolation, robust_poly_fit
+from .utils import get_temperature_parameters
 from astropy.io import fits
 import tqdm
 from astropy import log
@@ -120,8 +125,11 @@ def load_and_flag_clock_table(clockfile="latest_clock.dat", shift_non_malindi=Fa
 def spline_detrending(clock_offset_table, temptable, outlier_cuts=None,
                       fixed_control_points=None):
     tempcorr_idx = np.searchsorted(temptable['met'], clock_offset_table['met'])
-    tempcorr_idx[tempcorr_idx >= temptable['met'].size] = \
-        temptable['met'].size - 1
+    temperature_is_present = tempcorr_idx < temptable['met'].size
+    tempcorr_idx = tempcorr_idx[temperature_is_present]
+
+    clock_offset_table = clock_offset_table[temperature_is_present]
+
     clock_residuals = \
         np.array(clock_offset_table['offset'] -
                  temptable['temp_corr'][tempcorr_idx])
@@ -148,7 +156,7 @@ def spline_detrending(clock_offset_table, temptable, outlier_cuts=None,
         clock_residuals = clock_residuals[better_points]
 
     detrend_fun = spline_through_data(
-        clock_offset_table['met'], clock_residuals, downsample=20,
+        clock_offset_table['met'], clock_residuals, downsample=10,
         fixed_control_points=fixed_control_points)
 
     r_std = residual_roll_std(
@@ -176,8 +184,10 @@ def eliminate_trends_in_residuals(temp_table, clock_offset_table,
 
     tempcorr_idx = np.searchsorted(temp_table['met'],
                                    clock_offset_table['met'])
-    tempcorr_idx[tempcorr_idx == temp_table['met'].size] = \
-        temp_table['met'].size - 1
+    temperature_is_present = tempcorr_idx < temp_table['met'].size
+    tempcorr_idx = tempcorr_idx[temperature_is_present]
+
+    clock_offset_table = clock_offset_table[temperature_is_present]
 
     clock_residuals = \
         clock_offset_table['offset'] - temp_table['temp_corr'][tempcorr_idx]
@@ -212,10 +222,10 @@ def eliminate_trends_in_residuals(temp_table, clock_offset_table,
         table_new = temp_table[temp_idx_start:temp_idx_end]
         cltable_new = clock_offset_table[cl_idx_start:cl_idx_end]
         met = cltable_new['met']
-        
+
         if len(met) < 2:
             continue
-        
+
         residuals = clock_residuals[cl_idx_start:cl_idx_end]
         met0 = met[0]
         met_rescale = (met - met0)/(met[-1] - met0)
@@ -377,7 +387,7 @@ def get_malindi_data_except_when_out(clock_offset_table):
     """
     # Covers 2012/12/20 - 2013/02/08 Malindi outage
     # Also covers 2021/04/28 - 2021/05/06 issues with Malindi clock
-    
+
     no_malindi_intvs = [[93681591, 98051312],[357295300, 357972500]]
     clock_mets = clock_offset_table['met']
 
@@ -856,14 +866,6 @@ class ClockCorrection():
         self.gtis = find_good_time_intervals(
             self.temptable, self.clock_jump_times + 30)
 
-        # table_new = temperature_correction_table(
-        #     met_start, met_stop, temptable=temptable_raw,
-        #     freqchange_file=FREQFILE,
-        #     time_resolution=10, craig_fit=False, hdf_dump_file='dump.hdf5')
-        #
-        # table_new = eliminate_trends_in_residuals(
-        #     table_new, clock_offset_table_corr, gtis)
-
         self.temperature_correction_data = \
             temperature_correction_table(
                 self.met_start, self.met_stop,
@@ -878,12 +880,11 @@ class ClockCorrection():
             try:
                 self.adjust_temperature_correction()
             except Exception:
-                import traceback
                 logfile = 'adjust_temperature_error.log'
-                log.warn(f"Temperature adjustment failed. "
-                         f"Full error stack in {logfile}")
+                log.warning(f"Temperature adjustment failed. "
+                            f"Full error stack in {logfile}")
                 with open(logfile, 'w') as fobj:
-                    traceback.print_last(file=logfile)
+                    traceback.print_exc(file=fobj)
 
     def read_temptable(self, cache_temptable_name=None):
         if cache_temptable_name is not None and \
@@ -932,8 +933,10 @@ class ClockCorrection():
 
         tempcorr_idx = np.searchsorted(table_new['met'],
                                        clock_offset_table['met'])
-        tempcorr_idx[tempcorr_idx >= table_new['met'].size] = \
-            table_new['met'].size -1
+        temperature_is_present = tempcorr_idx < table_new['met'].size
+        tempcorr_idx = tempcorr_idx[temperature_is_present]
+
+        clock_offset_table = clock_offset_table[temperature_is_present]
 
         clock_residuals_detrend = clock_offset_table['offset'] - \
                                   table_new['temp_corr'][tempcorr_idx]
@@ -1157,6 +1160,36 @@ def interpolate_clock_function(new_clock_table, mets):
     return cubic_interpolation(x, xtab, ytab, yptab), good_mets
 
 
+def _analyze_residuals(filtered_data, nbins=101, fit_range=[-np.inf, np.inf]):
+    frequencies, edges = np.histogram(
+        filtered_data,
+        bins=np.linspace(-1000, 1500, nbins)
+    )
+    errors = frequencies**0.5
+    errors[errors < 1] = 1
+    renorm = np.sum(frequencies*np.diff(edges))
+    frequencies = frequencies / renorm
+    errors /= renorm
+    edge_centers = (edges[:-1] + edges[1:]) / 2
+    good = np.abs(filtered_data) < 2000
+    stats = {"median": np.median(filtered_data[good]), "mad": mad(filtered_data[good])}
+
+    inner = (edge_centers > fit_range[0]) & (edge_centers < fit_range[1])
+    def fitfunc(p, x):
+        if p[2] < 0:
+            return np.inf
+        return p[2] * norm(loc=p[0], scale=p[1]).pdf(x)
+
+    def errfunc(p, x, y, e):
+        res = np.sum(((y - fitfunc(p, x)) / e)**2)
+        return res
+
+    out = minimize(errfunc, [stats["median"], stats["mad"], 1], args=(edge_centers[inner], frequencies[inner], errors[inner]))
+    stats["fit_mean"] = out.x[0]
+    stats["fit_std"] = out.x[1]
+    stats["fit_norm"] = out.x[2]
+    return edges, frequencies, stats
+
 def plot_scatter(new_clock_table, clock_offset_table, shift_times=0,
                  debug=False):
     from bokeh.models import HoverTool
@@ -1215,10 +1248,10 @@ def plot_scatter(new_clock_table, clock_offset_table, shift_times=0,
         color_index='station', alpha=0.5, muted_line_alpha=0.1,
         muted_fill_alpha=0.03).overlay('station')
     plot_0a = hv.Curve(dict(x=clock_mets, y=yint),
-                       group='station', label='Clock corr')
+                       group='station', label='Clock corr').opts(color="k")
 
-    plot_0_all = plot_0.opts(opts.Scatter(width=900, height=350, tools=[hover])).opts(
-                             ylim=(-0.1, 0.8)) * plot_0a
+    plot_0_all = plot_0.opts(opts.Scatter(width=800, height=350, tools=[hover])).opts(
+                             ylim=(-0.1, 0.8), xlim=(77571700, None)) * plot_0a
 
     all_data_res = pd.DataFrame({'met': clock_mets,
                              'mjd': np.array(clock_mjds, dtype=int),
@@ -1239,7 +1272,7 @@ def plot_scatter(new_clock_table, clock_offset_table, shift_times=0,
     plot_1 = all_data_res.to.scatter('met', ['residual', 'mjd', 'doy', 'utc'],
                                  groupby='station').options(
         color_index='station', alpha=0.5, muted_line_alpha=0.1,
-        muted_fill_alpha=0.03).overlay('station')
+        muted_fill_alpha=0.03).overlay('station').hist(["residual"])
 
     plot_1b = hv.Curve({'x': new_clock_table['TIME'],
                         'y': new_clock_table['CLOCK_ERR_CORR'] * 1e6},
@@ -1251,9 +1284,40 @@ def plot_scatter(new_clock_table, clock_offset_table, shift_times=0,
         opts.Curve(color='k'))
 
     plot_1_all = plot_1.opts(
-        opts.Scatter(width=900, height=350, tools=[hover])).opts(
-                             ylim=(-700, 700)) * plot_1b * plot_1a
+        opts.Scatter(width=800, height=350, tools=[hover])).opts(
+                             ylim=(-700, 700), xlim=(77571700, None)) * plot_1b * plot_1a
 
+    plots = []
+    list_of_stations = sorted(list(set(all_data_res['station'])))
+    stats = {}
+    for station in list_of_stations:
+        print(station)
+        nbins = 101
+        fit_range = [-500, 1500]
+        if station == 'MLD':
+            nbins = 501
+            fit_range = [-200, 200]
+        # from astropy.stats import histogram
+        filtered_data = all_data_res[all_data_res['station']==station]['residual']
+        edges, frequencies, stats[station] = _analyze_residuals(filtered_data, nbins=nbins, fit_range=fit_range)
+
+        plots.append(hv.Histogram((edges, frequencies), label=station).opts(opts.Histogram(alpha=0.3, xlabel="residual (us)", ylabel="Density")))
+    plot_2 = hv.Overlay(plots)
+
+    fine_x = np.linspace(-1000, 1500, nbins * 10 + 1)
+    rv = norm(loc=stats["MLD"]["median"], scale=stats["MLD"]["mad"])
+    plot_2b = hv.Curve({'x': fine_x,
+                        'y': rv.pdf(fine_x)},
+                       group='station', label='Raw estimate').opts(
+        opts.Curve(color='grey'))
+
+    rv = norm(loc=stats["MLD"]["fit_mean"], scale=stats["MLD"]["fit_std"])
+    plot_2c = hv.Curve({'x': fine_x,
+                        'y': rv.pdf(fine_x) * stats["MLD"]["fit_norm"]},
+                       group='station', label='Fit').opts(
+        opts.Curve(color='k'))
+
+    plot_2 = (plot_2 * plot_2b * plot_2c).opts(opts.Overlay(width=800, height=350))
     rolling_data = pd.DataFrame({'met':control_points,
                                  'rolling_std':roll_std*1e6})
     rolling_data.to_pickle('rolling_data.pkl')
@@ -1261,16 +1325,16 @@ def plot_scatter(new_clock_table, clock_offset_table, shift_times=0,
     text_top = hv.Div("""
         <p>
         Clock offsets measured at ground station passes throughout
-        the mission (scatter points), compared to the thermal model for clock 
-        delays (line). Different colors indicate different ground stations 
-        (MLD: Malindi; SNG: Singapore; UHI: US Hawaii). 
+        the mission (scatter points), compared to the thermal model for clock
+        delays (line). Different colors indicate different ground stations
+        (MLD: Malindi; SNG: Singapore; UHI: US Hawaii).
         <p>Use the tools on the top right to zoom in the plot.</p>
-        """)
+        """).opts(width=500)
 
     text_bottom = hv.Div("""
         <p>
-        Residuals of the clock offsets with respect to the thermal model. 
-        The black lines indicate the local scatter, calculated over a time 
+        Residuals of the clock offsets with respect to the thermal model.
+        The black lines indicate the local scatter, calculated over a time
         span of approximately 5 days. The largest spikes indicate pathological
         intervals.</p>
         <p>
@@ -1279,12 +1343,36 @@ def plot_scatter(new_clock_table, clock_offset_table, shift_times=0,
         these periods, which should account for the typical deviation of the real clock
         delay with respect to the linear interpolation. This results in 1-ms "spikes" in
         the residuals and the rolling averages.
-        </p>        
+        </p>
         <p>Use the tools on the top right to zoom in the plot.</p>
-        """)
+        """).opts(width=500)
+
+    stat_str = """<p>
+        Some statistical information about the residuals. This plot shows the histograms of
+        the residuals and a few statistical indicators that might be used to evaluate the
+        quality of the fit. The median and the median absolute deviations are used as
+        robust proxies for the mean and the standard deviation. This is needed because of the
+        many large outliers that alter the naive estimates of the moments of the distributions.
+        Then, we fit the core of the distributions (the part cleaner from outliers, which is
+        [-150, 200] us for Malindi and [-500, 1500] for the others) with Gaussian curves, using
+        the Poisson error of the histograms as weights. The results are listed in the table and
+        show in the plot.
+        </p>
+        <div style="overflow-x:auto;text-align:center;">"""
+    stat_str += f"<p>Clock residuals stats (us):</p>\n"
+    stat_str += "<table style='width:100%;th.border:1px solid;'>\n"
+    stat_str += f"<tr><th>Station</th><th>Median</th><th>MAD</th><th>Fit mean</th><th>Fit STD</th></tr>\n"
+
+    for station, stat in stats.items():
+        stat_str += f"<tr><th>{station}</th><td>{stat['median']:.0f}</td><td>{stat['mad']:.0f}</td>"
+        stat_str += f"<td>{stat['fit_mean']:.0f}</td><td>{stat['fit_std']:.0f}</td></tr>"
+    stat_str += "</table></div>"
+
+    text_stats = hv.Div(f"{stat_str}").opts(width=500)
 
     return hv.Layout((plot_0_all + text_top) +
-                     (plot_1_all + text_bottom)).cols(2)
+                     (plot_1_all + text_bottom) +
+                     plot_2 + text_stats).cols(2)
 
 
 class NuSTARCorr():
@@ -1383,7 +1471,7 @@ def abs_des_fun(x, b0, b1, b2, b3, t0=77509250):
     return b0 * np.log(b1 * x + 1) + b2 * np.log(b3 * x + 1)
 
 
-def clock_ppm_model(nustar_met, temperature, craig_fit=False):
+def clock_ppm_model(nustar_met, temperature, craig_fit=False, version=None, pars=None):
     """Improved clock model
 
     Parameters
@@ -1398,19 +1486,21 @@ def clock_ppm_model(nustar_met, temperature, craig_fit=False):
         parameters of the ppm-temperature relation
     ppm_vs_T_pars : list
         parameters of the ppm-time relation (long-term clock decay)
-
+    version : str
+        Version of the model to use. If None, use the latest
+    pars : dict
+        Parameters of the model, forced to be used
     """
-    T0 = 13.440
-    #     offset = 13.9158325193 - 0.027918 - 4.608765729063114e-4 -7.463444052344004e-9
-    # offset = 13.8874536353 - 4.095179312091239e-4
-    offset = 13.91877 -0.02020554 # sum the "e" parameter from long term
-    ppm_vs_T_pars = [-0.07413, 0.00158]
-
-    ppm_vs_time_pars = [0.00874492067, 100.255995, -0.251789345,
-                        0.0334934847]
     if craig_fit:
-        offset = 1.3847529679329989e+01
-        ppm_vs_T_pars = [-7.3964896025586133e-02, 1.5055740907563737e-03]
+        version = "craig"
+
+    if pars is None:
+        pars = get_temperature_parameters(version)
+
+    T0 = pars['T0']
+    offset = pars['offset']
+    ppm_vs_T_pars = pars['ppm_vs_T_pars']
+    ppm_vs_time_pars = pars['ppm_vs_time_pars']
 
     temp = (temperature - T0)
     ftemp = offset + ppm_vs_T_pars[0] * temp + \
@@ -1424,7 +1514,7 @@ def clock_ppm_model(nustar_met, temperature, craig_fit=False):
 def temperature_delay(temptable, divisor,
                       met_start=None, met_stop=None,
                       debug=False, craig_fit=False,
-                      time_resolution=10):
+                      time_resolution=10, version=None, pars=None):
     table_times = temptable['met']
 
     if met_start is None:
@@ -1442,10 +1532,14 @@ def temperature_delay(temptable, divisor,
 
     try:
         ppm_mod = clock_ppm_model(times_fine, temp_fun(times_fine),
-                                  craig_fit=craig_fit)
+                                  craig_fit=craig_fit, version=version, pars=pars)
     except:
-        print(times_fine.min(), times_fine.max())
-        print(table_times.min(), table_times.max())
+        error_msg = f"""
+        Error in clock_ppm_model:
+        Times: {times_fine.min()} - {times_fine.max()}
+        Table times: {table_times.min()} - {table_times.max()}
+        """
+        log.error(error_msg)
         raise
 
     clock_rate_corr = (1 + ppm_mod / 1000000) * 24000000 / divisor - 1
@@ -1461,7 +1555,9 @@ def temperature_correction_table(met_start, met_stop,
                                  hdf_dump_file='dump.hdf5',
                                  force_divisor=None,
                                  time_resolution=0.5,
-                                 craig_fit=False):
+                                 craig_fit=False,
+                                 version=None,
+                                 pars=None):
     import six
     if hdf_dump_file is not None and os.path.exists(hdf_dump_file):
         log.info(f"Reading cached data from file {hdf_dump_file}")
@@ -1508,6 +1604,8 @@ def temperature_correction_table(met_start, met_stop,
     log.info(f"Calculating temperature correction between "
              f"MET {met_start:.1f}--{met_stop:.1f}")
 
+    mean_history = np.mean(temptable["temperature_smooth"])
+
     for i, met_intv in tqdm.tqdm(enumerate(met_intervals),
                                  total=len(met_intervals)):
         if met_intv[1] < met_start:
@@ -1527,23 +1625,32 @@ def temperature_correction_table(met_start, met_stop,
             log.warning(
                 f"Too few temperature points in interval "
                 f"{start} to {stop} (MET)")
-            temp_corr = np.zeros_like(times_fine)
-        else:
-            delay_function = \
-                temperature_delay(temptable_filt, divisors[i], craig_fit=craig_fit,
-                                  time_resolution=time_resolution)
+            # Get an estimate of the mean temperature closest to those dates
+            if tempidx[0] == 0:
+                ref_t = np.mean(temptable['temperature_smooth'][:20])
+                print("Using average temperature at the start of series")
+            elif tempidx[1] == len(temptable):
+                ref_t = np.mean(temptable['temperature_smooth'][-20:])
+                print("Using average temperature at the end of series")
+            else:
+                print("Using average temperature")
+                ref_t = mean_history
 
-            temp_corr = \
-                delay_function(times_fine) + last_corr - delay_function(last_time)
-            temp_corr[temp_corr != temp_corr] = 0
+            raw_mets = np.arange(start - 20, stop + 20)
+
+            temptable_filt = Table(dict(met=raw_mets, temperature_smooth=ref_t + np.zeros_like(raw_mets)))
+
+        delay_function = \
+            temperature_delay(temptable_filt, divisors[i], craig_fit=craig_fit,
+                                time_resolution=time_resolution,version=version, pars=pars)
+
+        temp_corr = \
+            delay_function(times_fine) + last_corr - delay_function(last_time)
+        temp_corr[temp_corr != temp_corr] = 0
 
         new_data = Table(dict(met=times_fine,
                               temp_corr=temp_corr,
                               divisor=np.zeros_like(times_fine) + divisors[i]))
-
-        # if np.any(temp_corr != temp_corr):
-        #     log.error("Invalid data in temperature table")
-        #     break
 
         N = len(times_fine)
         table[firstidx:firstidx + N] = new_data
@@ -1557,7 +1664,7 @@ def temperature_correction_table(met_start, met_stop,
 
     if hdf_dump_file is not None:
         log.info(f"Saving intermediate data to {hdf_dump_file}...")
-        table.write(hdf_dump_file)
+        table.write(hdf_dump_file, overwrite=True)
         log.info(f"Done.")
     return table
 
@@ -1676,7 +1783,6 @@ def main_update_temptable(args=None):
     log.info("Reading new temperature values")
     new_table = read_csv_temptable(temperature_file=args.tempfile,
                                    mjdstart=last_measurement)
-
     if last_measurement is not None:
         new_values = new_table['mjd'] > last_measurement
         if not np.any(new_values):
@@ -1696,11 +1802,13 @@ def main_update_temptable(args=None):
         outfile = os.path.splitext(args.tempfile)[0] + '.hdf5'
 
     log.info(f"Saving to {outfile}")
+
     new_table.write(outfile, path="temptable", overwrite=True)
 
 
 def main_plot_diagnostics(args=None):
     import argparse
+    import re
     description = ('Plot diagnostic information about the newly produced '
                    'clock file.')
     parser = argparse.ArgumentParser(description=description)
@@ -1713,8 +1821,17 @@ def main_plot_diagnostics(args=None):
     args = parser.parse_args(args)
 
     clock_offset_table = read_clock_offset_table(args.clockoff)
-    plot = plot_scatter(Table.read(args.clockcorr, hdu="NU_FINE_CLOCK"),
-                        clock_offset_table)
+    with fits.open(args.clockcorr) as hdul:
+        data = hdul["NU_FINE_CLOCK"].data
+        header = hdul["NU_FINE_CLOCK"].header
+        shift_times = 0.
+        for comment in header["COMMENT"]:
+            if "A systematic shift" in comment:
+                shift_time_re = re.compile(r".*A systematic shift of ([^ ]+) s was applied.*")
+                shift_times = float(shift_time_re.match(comment).group(1))
+                break
+        data = Table(data)
+    plot = plot_scatter(data, clock_offset_table, shift_times=shift_times)
 
     outfig = args.clockcorr.replace(".gz", "").replace(".fits", "")
     renderer = hv.renderer('bokeh')
