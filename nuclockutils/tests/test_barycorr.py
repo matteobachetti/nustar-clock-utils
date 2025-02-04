@@ -24,12 +24,19 @@ class TestExecution(object):
 
     @pytest.mark.remote_data
     def test_barycorr(self):
-        outfile = main_barycorr([self.evfile, self.orbfile, self.parfile])
+        outfile = main_barycorr([self.evfile, self.orbfile, "-p", self.parfile])
         assert os.path.exists(outfile)
         with pytest.raises(RuntimeError):
-            main_barycorr([self.evfile, self.orbfile, self.parfile,
+            main_barycorr([self.evfile, self.orbfile, "-p", self.parfile,
                            '-o', outfile])
-        main_barycorr([self.evfile, self.orbfile, self.parfile,
+        main_barycorr([self.evfile, self.orbfile, "-p", self.parfile,
                        '-o', outfile, '--overwrite'])
+
+        os.unlink(outfile)
+
+    @pytest.mark.remote_data
+    def test_barycorr_no_bary(self):
+        outfile = main_barycorr([self.evfile, "--no-bary"])
+        assert os.path.exists(outfile)
 
         os.unlink(outfile)

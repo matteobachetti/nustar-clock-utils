@@ -116,22 +116,28 @@ def get_barycentric_correction(orbfile, parfile, dt=5, ephem='DE421'):
                     kind='quadratic')
 
 
-def correct_times(times, bary_fun, clock_fun=None):
-    cl_corr = 0
+def correct_times(times, bary_fun=None, clock_fun=None):
+    cl_corr = bary_corr = 0
     if clock_fun is not None:
         cl_corr = clock_fun(times)
-    bary_corr = bary_fun(times)
+    if bary_fun is not None:
+        bary_corr = bary_fun(times)
 
     return times + cl_corr + bary_corr
 
 
 def apply_clock_correction(
-    fname, orbfile, outfile='bary.evt', clockfile=None,
+    fname, orbfile=None, outfile='bary.evt', clockfile=None,
     parfile=None, ephem='DE421', radecsys='ICRS', overwrite=False,
-    nodetrend=False, shift_times=0):
+    nodetrend=False, shift_times=0, no_bary=False):
     version = nuclockutils.__version__
 
-    bary_fun = get_barycentric_correction(orbfile, parfile, ephem=ephem)
+    if orbfile is None and not no_bary:
+        raise ValueError("Must specify orbit file")
+
+    bary_fun = None
+    if not no_bary:
+        bary_fun = get_barycentric_correction(orbfile, parfile, ephem=ephem)
     with fits.open(fname, memmap=True) as hdul:
         times = hdul[1].data['TIME']
         unique_times = np.unique(times)
@@ -183,12 +189,15 @@ def apply_clock_correction(
 
 def _default_out_file(args):
     outfile = 'bary'
-    if not os.path.exists(args.clockfile):
+    if args.clockfile is None or not os.path.exists(args.clockfile):
         outfile += '_noclock'
-    if not os.path.exists(args.parfile):
+    if args.parfile is None or not os.path.exists(args.parfile):
         outfile += '_nopar'
     if args.use_nodetrend:
         outfile += '_nodetrend'
+    if args.no_bary:
+        outfile += '_nobary'
+
     outfile += '.evt'
 
     return outfile
@@ -201,7 +210,7 @@ def main_barycorr(args=None):
     parser = argparse.ArgumentParser(description=description)
 
     parser.add_argument("file", help="Uncorrected event file")
-    parser.add_argument("orbitfile", help="Orbit file")
+    parser.add_argument("orbitfile", help="Orbit file", default=None, type=str, nargs="?")
     parser.add_argument("-p", "--parfile",
                         help="Parameter file in TEMPO/TEMPO2 "
                              "format (for precise coordinates)",
@@ -222,6 +231,9 @@ def main_barycorr(args=None):
                         help="Use un-detrended correction in separate FITS "
                              "extension",
                         action='store_true', default=False)
+    parser.add_argument("--no-bary",
+                        help="Do not barycenter the data",
+                        action='store_true', default=False)
 
     args = parser.parse_args(args)
 
@@ -236,7 +248,7 @@ def main_barycorr(args=None):
         args.file, args.orbitfile, parfile=args.parfile, outfile=outfile,
         overwrite=args.overwrite, nodetrend=args.use_nodetrend,
         clockfile=args.clockfile,
-        shift_times=args.shift_times)
+        shift_times=args.shift_times, no_bary=args.no_bary)
 
     return outfile
 
